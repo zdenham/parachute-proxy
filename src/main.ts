@@ -27,7 +27,7 @@ const server = Bun.serve({
 	async fetch(req) {
 		const url = new URL(req.url);
 
-		if (req.method === "POST" && url.pathname === "/proxy") {
+		if (req.method === "POST" && (url.pathname === "/proxy" || url.pathname === "/v1/messages")) {
 			return proxyHandler(req);
 		}
 
