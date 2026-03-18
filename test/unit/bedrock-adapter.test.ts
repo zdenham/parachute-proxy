@@ -59,12 +59,34 @@ describe("bedrockAdapter", () => {
 			expect(url).toStartWith("https://custom.bedrock.test/");
 		});
 
-		test("works without credentials (no apiKey)", () => {
-			const config: ProviderConfig = { enabled: true, region: "us-west-2" };
-			const { url, headers } = bedrockAdapter.translate(baseReq, config);
-			expect(url).toContain("us-west-2");
-			// No Authorization header without credentials
-			expect(headers.authorization).toBeUndefined();
+		test("works without credentials (no apiKey, no env, no profile)", () => {
+			const saved = {
+				accessKey: process.env.AWS_ACCESS_KEY_ID,
+				secretKey: process.env.AWS_SECRET_ACCESS_KEY,
+				credFile: process.env.AWS_SHARED_CREDENTIALS_FILE,
+				profile: process.env.AWS_PROFILE,
+			};
+			try {
+				delete process.env.AWS_ACCESS_KEY_ID;
+				delete process.env.AWS_SECRET_ACCESS_KEY;
+				delete process.env.AWS_PROFILE;
+				process.env.AWS_SHARED_CREDENTIALS_FILE = "/nonexistent/path";
+
+				const config: ProviderConfig = { enabled: true, region: "us-west-2" };
+				const { url, headers } = bedrockAdapter.translate(baseReq, config);
+				expect(url).toContain("us-west-2");
+				// No Authorization header without credentials
+				expect(headers.authorization).toBeUndefined();
+			} finally {
+				for (const [key, val] of Object.entries(saved)) {
+					const envKey = key === "accessKey" ? "AWS_ACCESS_KEY_ID"
+						: key === "secretKey" ? "AWS_SECRET_ACCESS_KEY"
+						: key === "credFile" ? "AWS_SHARED_CREDENTIALS_FILE"
+						: "AWS_PROFILE";
+					if (val !== undefined) process.env[envKey] = val;
+					else delete process.env[envKey];
+				}
+			}
 		});
 	});
 

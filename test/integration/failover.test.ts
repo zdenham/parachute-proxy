@@ -403,6 +403,34 @@ describe("failover integration tests", () => {
 		});
 	});
 
+	describe("stream monitoring", () => {
+		test("normal stream completes without recording failure", async () => {
+			primary.reset(() => sseResponse("monitored stream"));
+
+			const config = makeConfig({
+				providerOrder: ["primary"],
+				providers: {
+					primary: { apiKey: "k1", baseUrl: primary.url },
+				},
+				maxRetries: 0,
+			});
+			const router = new Router({ providerOrder: config.routing.providerOrder, circuitBreaker: config.circuitBreaker });
+			router.registerAdapter(createMockAdapter("primary", primary.url));
+
+			const handler = createProxyHandler(config, router);
+			const res = await handler(makeRequest(true));
+
+			expect(res.status).toBe(200);
+			const body = await res.text();
+			expect(body).toContain("monitored stream");
+
+			// Normal completion should have recorded success, not failure
+			const health = router.getHealthTracker().getHealth("primary");
+			expect(health.successCount).toBe(1);
+			expect(health.failureCount).toBe(0);
+		});
+	});
+
 	describe("no providers configured", () => {
 		test("returns 503 when no providers have API keys", async () => {
 			const config = makeConfig({

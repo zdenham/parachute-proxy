@@ -105,5 +105,64 @@ function resolveCredentials(config: ProviderConfig): AwsCredentials | null {
 		}
 	}
 
+	// Try loading from ~/.aws/credentials profile
+	const profileCreds = loadAwsProfile(config.profile ?? process.env.AWS_PROFILE ?? "default");
+	if (profileCreds) {
+		return profileCreds;
+	}
+
+	return null;
+}
+
+/**
+ * Load AWS credentials from ~/.aws/credentials INI file.
+ */
+function loadAwsProfile(profile: string): AwsCredentials | null {
+	const homedir = process.env.HOME ?? process.env.USERPROFILE ?? "";
+	const credentialsPath = process.env.AWS_SHARED_CREDENTIALS_FILE
+		?? `${homedir}/.aws/credentials`;
+
+	try {
+		const content = require("node:fs").readFileSync(credentialsPath, "utf-8") as string;
+		return parseAwsCredentials(content, profile);
+	} catch {
+		return null;
+	}
+}
+
+/** Parse an INI-format AWS credentials file and extract credentials for the given profile. */
+export function parseAwsCredentials(content: string, profile: string): AwsCredentials | null {
+	const lines = content.split("\n");
+	const sectionHeader = `[${profile}]`;
+	let inSection = false;
+	let accessKeyId: string | undefined;
+	let secretAccessKey: string | undefined;
+	let sessionToken: string | undefined;
+
+	for (const rawLine of lines) {
+		const line = rawLine.trim();
+
+		if (line.startsWith("[")) {
+			inSection = line.toLowerCase() === sectionHeader.toLowerCase();
+			continue;
+		}
+
+		if (!inSection) continue;
+		if (!line || line.startsWith("#") || line.startsWith(";")) continue;
+
+		const eqIdx = line.indexOf("=");
+		if (eqIdx === -1) continue;
+
+		const key = line.slice(0, eqIdx).trim().toLowerCase();
+		const value = line.slice(eqIdx + 1).trim();
+
+		if (key === "aws_access_key_id") accessKeyId = value;
+		else if (key === "aws_secret_access_key") secretAccessKey = value;
+		else if (key === "aws_session_token") sessionToken = value;
+	}
+
+	if (accessKeyId && secretAccessKey) {
+		return { accessKeyId, secretAccessKey, sessionToken };
+	}
 	return null;
 }

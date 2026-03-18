@@ -7,6 +7,8 @@ export const providerConfigSchema = z.object({
 	defaultModel: z.string().optional(),
 	region: z.string().optional(),
 	projectId: z.string().optional(),
+	/** AWS profile name for Bedrock credential loading from ~/.aws/credentials */
+	profile: z.string().optional(),
 });
 
 const serverDefaults = { host: "127.0.0.1", port: 3080 };

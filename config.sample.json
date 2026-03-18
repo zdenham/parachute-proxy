@@ -11,11 +11,13 @@
     "vertex": {
       "enabled": false,
       "region": "us-east5",
-      "projectId": "your-gcp-project-id"
+      "projectId": "your-gcp-project-id",
+      "apiKey": "optional-bearer-token-or-omit-for-ADC"
     },
     "bedrock": {
       "enabled": false,
-      "region": "us-east-1"
+      "region": "us-east-1",
+      "profile": "default"
     }
   },
   "routing": {

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import type {
 	ClassifiedError,
 	ProviderAdapter,
@@ -6,6 +7,10 @@ import type {
 } from "../../types/index.ts";
 
 const ANTHROPIC_VERSION = "vertex-2023-10-16";
+
+/** Cached ADC token with expiration (tokens last 60min, refresh at 50min) */
+let cachedAdcToken: { token: string; expiresAt: number } | null = null;
+const ADC_TOKEN_TTL_MS = 50 * 60 * 1000; // 50 minutes
 
 /**
  * Vertex AI adapter for Claude models.
@@ -32,9 +37,12 @@ export const vertexAdapter: ProviderAdapter = {
 
 		const url = `${baseUrl}/v1/projects/${projectId}/locations/${region}/publishers/anthropic/models/${req.model}:${method}`;
 
+		// Resolve auth: explicit apiKey or ADC
+		const token = config.apiKey || resolveAdcToken();
+
 		const headers: Record<string, string> = {
 			"content-type": "application/json",
-			authorization: `Bearer ${config.apiKey ?? ""}`,
+			authorization: `Bearer ${token ?? ""}`,
 		};
 
 		// Vertex expects the Anthropic-compatible body with anthropic_version field
@@ -72,3 +80,37 @@ export const vertexAdapter: ProviderAdapter = {
 		}
 	},
 };
+
+/**
+ * Resolve an access token from Google Application Default Credentials.
+ * Uses `gcloud auth application-default print-access-token` with caching.
+ * Returns null if gcloud is not available or ADC is not configured.
+ */
+export function resolveAdcToken(): string | null {
+	// Return cached token if still valid
+	if (cachedAdcToken && Date.now() < cachedAdcToken.expiresAt) {
+		return cachedAdcToken.token;
+	}
+
+	try {
+		const result = spawnSync("gcloud", ["auth", "application-default", "print-access-token"], {
+			timeout: 5000,
+			env: process.env,
+		});
+
+		if (result.status !== 0) return null;
+
+		const token = result.stdout?.toString().trim();
+		if (!token) return null;
+
+		cachedAdcToken = { token, expiresAt: Date.now() + ADC_TOKEN_TTL_MS };
+		return token;
+	} catch {
+		return null;
+	}
+}
+
+/** Reset the cached ADC token (for testing). */
+export function resetAdcTokenCache(): void {
+	cachedAdcToken = null;
+}

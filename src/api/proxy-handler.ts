@@ -154,10 +154,18 @@ async function executeStreamingRequest(
 
 		if (upstream.ok && upstream.body) {
 			logger.info("Streaming started", { reqId, status: upstream.status, provider: providerName });
+			// Record success for the initial connection, but monitor for mid-stream failures
 			router.recordSuccess(providerName);
 
+			const monitoredBody = createMonitoredStream(
+				upstream.body,
+				reqId,
+				providerName,
+				router,
+			);
+
 			return {
-				response: new Response(upstream.body, {
+				response: new Response(monitoredBody, {
 					status: 200,
 					headers: {
 						"content-type": "text/event-stream",
@@ -312,6 +320,47 @@ async function executeWithRetry(
 function getProviderConfig(config: Config, name: string): ProviderConfig | undefined {
 	const providers = config.providers as Record<string, ProviderConfig | undefined>;
 	return providers[name];
+}
+
+/**
+ * Wraps a readable stream to detect mid-stream failures.
+ * If the upstream disconnects or errors after bytes have been sent,
+ * records a failure in the health tracker so the circuit breaker
+ * can account for it in future routing decisions.
+ */
+function createMonitoredStream(
+	upstream: ReadableStream<Uint8Array>,
+	reqId: string,
+	providerName: string,
+	router: Router,
+): ReadableStream<Uint8Array> {
+	const reader = upstream.getReader();
+
+	return new ReadableStream({
+		async pull(controller) {
+			try {
+				const { done, value } = await reader.read();
+				if (done) {
+					logger.info("Stream completed", { reqId, provider: providerName });
+					controller.close();
+					return;
+				}
+				controller.enqueue(value);
+			} catch (err) {
+				logger.warn("Mid-stream failure detected", {
+					reqId,
+					provider: providerName,
+					error: String(err),
+				});
+				// Record failure so circuit breaker tracks mid-stream disconnects
+				router.recordFailure(providerName);
+				controller.error(err);
+			}
+		},
+		cancel() {
+			reader.cancel();
+		},
+	});
 }
 
 function jsonError(
