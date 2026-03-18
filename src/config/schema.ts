@@ -10,7 +10,7 @@ export const providerConfigSchema = z.object({
 });
 
 const serverDefaults = { host: "127.0.0.1", port: 3080 };
-const retryDefaults = { maxRetries: 2, minTimeoutMs: 500, maxTimeoutMs: 5000 };
+const retryDefaults = { maxRetries: 2, minTimeoutMs: 500, maxTimeoutMs: 5000, requestTimeoutMs: 120_000 };
 const providerDefaults = { enabled: true };
 const circuitBreakerDefaults = {
 	failureThreshold: 5,
@@ -56,6 +56,7 @@ export const configSchema = z.object({
 			maxRetries: z.number().int().min(0).max(10).default(retryDefaults.maxRetries),
 			minTimeoutMs: z.number().int().min(0).default(retryDefaults.minTimeoutMs),
 			maxTimeoutMs: z.number().int().min(0).default(retryDefaults.maxTimeoutMs),
+			requestTimeoutMs: z.number().int().min(1000).default(retryDefaults.requestTimeoutMs),
 		})
 		.default(retryDefaults),
 });

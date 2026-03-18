@@ -133,7 +133,24 @@ async function executeStreamingRequest(
 			await new Promise((r) => setTimeout(r, delay));
 		}
 
-		const upstream = await fetch(url, { method: "POST", headers, body });
+		let upstream: Response;
+		try {
+			upstream = await fetch(url, {
+				method: "POST",
+				headers,
+				body,
+				signal: AbortSignal.timeout(config.retry.requestTimeoutMs),
+			});
+		} catch (err) {
+			const isTimeout = err instanceof DOMException && err.name === "TimeoutError";
+			logger.warn("Upstream request failed", {
+				reqId,
+				attempt,
+				provider: providerName,
+				reason: isTimeout ? "timeout" : "network",
+			});
+			continue; // retry
+		}
 
 		if (upstream.ok && upstream.body) {
 			logger.info("Streaming started", { reqId, status: upstream.status, provider: providerName });
@@ -219,6 +236,7 @@ async function executeWithRetry(
 					method: "POST",
 					headers,
 					body,
+					signal: AbortSignal.timeout(config.retry.requestTimeoutMs),
 				});
 
 				if (upstream.ok) {

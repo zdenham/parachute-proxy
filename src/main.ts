@@ -1,6 +1,6 @@
 import { loadConfig } from "./config/loader.ts";
 import { createProxyHandler } from "./api/proxy-handler.ts";
-import { healthHandler } from "./api/health-handler.ts";
+import { createHealthHandler } from "./api/health-handler.ts";
 import { logger } from "./telemetry/logger.ts";
 import { Router } from "./router/selector.ts";
 import { anthropicAdapter } from "./providers/anthropic/adapter.ts";
@@ -19,6 +19,7 @@ router.registerAdapter(vertexAdapter);
 router.registerAdapter(bedrockAdapter);
 
 const proxyHandler = createProxyHandler(config, router);
+const healthHandler = createHealthHandler(router);
 
 const server = Bun.serve({
 	hostname: config.server.host,
@@ -46,3 +47,13 @@ logger.info("Proxy listening", {
 	port: config.server.port,
 	url: `http://${server.hostname}:${server.port}`,
 });
+
+// Graceful shutdown
+function shutdown(signal: string) {
+	logger.info("Shutting down", { signal });
+	server.stop(true); // close keep-alive connections
+	process.exit(0);
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
