@@ -5,11 +5,21 @@ export const providerConfigSchema = z.object({
 	apiKey: z.string().optional(),
 	baseUrl: z.string().url().optional(),
 	defaultModel: z.string().optional(),
+	region: z.string().optional(),
+	projectId: z.string().optional(),
 });
 
 const serverDefaults = { host: "127.0.0.1", port: 3080 };
 const retryDefaults = { maxRetries: 2, minTimeoutMs: 500, maxTimeoutMs: 5000 };
 const providerDefaults = { enabled: true };
+const circuitBreakerDefaults = {
+	failureThreshold: 5,
+	failureWindowMs: 60_000,
+	cooldownMs: 30_000,
+};
+const routingDefaults = {
+	providerOrder: ["anthropic"] as string[],
+};
 
 export const configSchema = z.object({
 	server: z
@@ -21,8 +31,26 @@ export const configSchema = z.object({
 	providers: z
 		.object({
 			anthropic: providerConfigSchema.default(providerDefaults),
+			vertex: providerConfigSchema.default({ enabled: false }),
+			bedrock: providerConfigSchema.default({ enabled: false }),
 		})
-		.default({ anthropic: providerDefaults }),
+		.default({
+			anthropic: providerDefaults,
+			vertex: { enabled: false },
+			bedrock: { enabled: false },
+		}),
+	routing: z
+		.object({
+			providerOrder: z.array(z.string()).default(routingDefaults.providerOrder),
+		})
+		.default(routingDefaults),
+	circuitBreaker: z
+		.object({
+			failureThreshold: z.number().int().min(1).default(circuitBreakerDefaults.failureThreshold),
+			failureWindowMs: z.number().int().min(1000).default(circuitBreakerDefaults.failureWindowMs),
+			cooldownMs: z.number().int().min(1000).default(circuitBreakerDefaults.cooldownMs),
+		})
+		.default(circuitBreakerDefaults),
 	retry: z
 		.object({
 			maxRetries: z.number().int().min(0).max(10).default(retryDefaults.maxRetries),

@@ -2,9 +2,19 @@ import { loadConfig } from "./config/loader.ts";
 import { createProxyHandler } from "./api/proxy-handler.ts";
 import { healthHandler } from "./api/health-handler.ts";
 import { logger } from "./telemetry/logger.ts";
+import { Router } from "./router/selector.ts";
+import { anthropicAdapter } from "./providers/anthropic/adapter.ts";
 
 const config = loadConfig();
-const proxyHandler = createProxyHandler(config);
+
+// Build the router with registered provider adapters
+const router = new Router({
+	providerOrder: config.routing.providerOrder,
+	circuitBreaker: config.circuitBreaker,
+});
+router.registerAdapter(anthropicAdapter);
+
+const proxyHandler = createProxyHandler(config, router);
 
 const server = Bun.serve({
 	hostname: config.server.host,

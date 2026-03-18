@@ -1,11 +1,11 @@
 import retry from "async-retry";
-import { anthropicAdapter } from "../providers/anthropic/adapter.ts";
 import { logger } from "../telemetry/logger.ts";
 import { getRequestId } from "../http/request-id.ts";
 import { proxyRequestSchema } from "../http/validation.ts";
-import type { Config, ErrorResponse, ProxyRequest } from "../types/index.ts";
+import type { Config, ErrorResponse, ProviderAdapter, ProviderConfig, ProxyRequest } from "../types/index.ts";
+import { Router } from "../router/selector.ts";
 
-export function createProxyHandler(config: Config) {
+export function createProxyHandler(config: Config, router: Router) {
 	return async (req: Request): Promise<Response> => {
 		const reqId = getRequestId(req.headers);
 		const logCtx = { reqId };
@@ -34,22 +34,83 @@ export function createProxyHandler(config: Config) {
 			stream: isStream,
 		});
 
-		// Check API key
-		const providerConfig = config.providers.anthropic;
-		if (!providerConfig.apiKey) {
-			return jsonError(401, "authentication_error", "No API key configured for anthropic", reqId);
+		// Select provider via router
+		const selected = router.select();
+		if (!selected) {
+			return jsonError(503, "overloaded_error", "No healthy providers available", reqId);
 		}
 
-		const { url, headers, body: upstreamBody } = anthropicAdapter.translate(proxyReq, providerConfig);
+		// Try the selected provider, then failover if needed
+		let currentProvider = selected;
+		while (currentProvider) {
+			const providerConfig = getProviderConfig(config, currentProvider.name);
+			if (!providerConfig?.apiKey) {
+				logger.warn("No API key for provider, trying next", {
+					reqId,
+					provider: currentProvider.name,
+				});
+				currentProvider = router.selectNext(currentProvider.name) ?? null;
+				continue;
+			}
 
-		// For streaming, we cannot retry once bytes are sent
-		if (isStream) {
-			return executeStreamingRequest(url, headers, upstreamBody, reqId, config);
+			const { url, headers, body: upstreamBody } = currentProvider.adapter.translate(
+				proxyReq,
+				providerConfig,
+			);
+
+			logger.info("Forwarding to provider", {
+				reqId,
+				provider: currentProvider.name,
+			});
+
+			const result = isStream
+				? await executeStreamingRequest(
+						url,
+						headers,
+						upstreamBody,
+						reqId,
+						config,
+						currentProvider.adapter,
+						currentProvider.name,
+						router,
+					)
+				: await executeWithRetry(
+						url,
+						headers,
+						upstreamBody,
+						reqId,
+						config,
+						currentProvider.adapter,
+						currentProvider.name,
+						router,
+					);
+
+			if (result.failover) {
+				// Try next provider
+				const next = router.selectNext(currentProvider.name);
+				if (next) {
+					logger.info("Failing over", {
+						reqId,
+						from: currentProvider.name,
+						to: next.name,
+					});
+					currentProvider = next;
+					continue;
+				}
+				// No more providers — return the last error
+				return result.response;
+			}
+
+			return result.response;
 		}
 
-		// Non-streaming: retry on retryable errors
-		return executeWithRetry(url, headers, upstreamBody, reqId, config);
+		return jsonError(503, "overloaded_error", "All providers exhausted", reqId);
 	};
+}
+
+interface ExecuteResult {
+	response: Response;
+	failover: boolean;
 }
 
 async function executeStreamingRequest(
@@ -58,69 +119,87 @@ async function executeStreamingRequest(
 	body: string,
 	reqId: string,
 	config: Config,
-): Promise<Response> {
-	let lastError: Response | undefined;
-
-	// Retry before streaming starts
+	adapter: ProviderAdapter,
+	providerName: string,
+	router: Router,
+): Promise<ExecuteResult> {
 	for (let attempt = 0; attempt <= config.retry.maxRetries; attempt++) {
 		if (attempt > 0) {
 			const delay = Math.min(
 				config.retry.minTimeoutMs * 2 ** (attempt - 1),
 				config.retry.maxTimeoutMs,
 			);
-			logger.info("Retrying streaming request", { reqId, attempt, delay });
+			logger.info("Retrying streaming request", { reqId, attempt, delay, provider: providerName });
 			await new Promise((r) => setTimeout(r, delay));
 		}
 
 		const upstream = await fetch(url, { method: "POST", headers, body });
 
 		if (upstream.ok && upstream.body) {
-			logger.info("Streaming started", { reqId, status: upstream.status });
+			logger.info("Streaming started", { reqId, status: upstream.status, provider: providerName });
+			router.recordSuccess(providerName);
 
-			return new Response(upstream.body, {
-				status: 200,
-				headers: {
-					"content-type": "text/event-stream",
-					"cache-control": "no-cache",
-					connection: "keep-alive",
-					"x-request-id": reqId,
-				},
-			});
+			return {
+				response: new Response(upstream.body, {
+					status: 200,
+					headers: {
+						"content-type": "text/event-stream",
+						"cache-control": "no-cache",
+						connection: "keep-alive",
+						"x-request-id": reqId,
+					},
+				}),
+				failover: false,
+			};
 		}
 
 		const errorBody = await upstream.text();
-		const classified = anthropicAdapter.classifyError(upstream.status, errorBody);
+		const classified = adapter.classifyError(upstream.status, errorBody);
 
 		if (!classified.retryable) {
+			// Non-retryable errors like auth/validation — don't failover
 			logger.warn("Non-retryable upstream error", {
 				reqId,
 				status: upstream.status,
 				category: classified.category,
+				provider: providerName,
 			});
-			return new Response(errorBody, {
-				status: upstream.status,
-				headers: {
-					"content-type": "application/json",
-					"x-request-id": reqId,
-				},
-			});
+
+			if (classified.category === "auth") {
+				// Auth errors might be provider-specific — try failover
+				router.recordFailure(providerName);
+				return {
+					response: new Response(errorBody, {
+						status: upstream.status,
+						headers: { "content-type": "application/json", "x-request-id": reqId },
+					}),
+					failover: true,
+				};
+			}
+
+			return {
+				response: new Response(errorBody, {
+					status: upstream.status,
+					headers: { "content-type": "application/json", "x-request-id": reqId },
+				}),
+				failover: false,
+			};
 		}
 
 		logger.warn("Retryable upstream error", {
 			reqId,
 			status: upstream.status,
 			attempt,
-		});
-		lastError = new Response(errorBody, {
-			status: upstream.status,
-			headers: {
-				"content-type": "application/json",
-				"x-request-id": reqId,
-			},
+			provider: providerName,
 		});
 	}
 
-	return lastError ?? jsonError(502, "api_error", "All retries exhausted", reqId);
+	// All retries exhausted — trigger failover
+	router.recordFailure(providerName);
+	return {
+		response: jsonError(502, "api_error", "All retries exhausted", reqId),
+		failover: true,
+	};
 }
 
 async function executeWithRetry(
@@ -129,7 +208,10 @@ async function executeWithRetry(
 	body: string,
 	reqId: string,
 	config: Config,
-): Promise<Response> {
+	adapter: ProviderAdapter,
+	providerName: string,
+	router: Router,
+): Promise<ExecuteResult> {
 	try {
 		const result = await retry(
 			async (bail) => {
@@ -141,6 +223,7 @@ async function executeWithRetry(
 
 				if (upstream.ok) {
 					const responseBody = await upstream.text();
+					router.recordSuccess(providerName);
 					return new Response(responseBody, {
 						status: upstream.status,
 						headers: {
@@ -151,7 +234,7 @@ async function executeWithRetry(
 				}
 
 				const errorBody = await upstream.text();
-				const classified = anthropicAdapter.classifyError(upstream.status, errorBody);
+				const classified = adapter.classifyError(upstream.status, errorBody);
 
 				if (!classified.retryable) {
 					const errResponse = new Response(errorBody, {
@@ -161,8 +244,7 @@ async function executeWithRetry(
 							"x-request-id": reqId,
 						},
 					});
-					bail(Object.assign(new Error(classified.message), { response: errResponse }));
-					// bail() throws, but TS doesn't know that
+					bail(Object.assign(new Error(classified.message), { response: errResponse, classified }));
 					return undefined as never;
 				}
 
@@ -179,21 +261,39 @@ async function executeWithRetry(
 						reqId,
 						attempt,
 						error: err.message,
+						provider: providerName,
 					});
 				},
 			},
 		);
 
-		logger.info("Proxy response", { reqId, status: result.status });
-		return result;
+		logger.info("Proxy response", { reqId, status: result.status, provider: providerName });
+		return { response: result, failover: false };
 	} catch (err: unknown) {
-		const error = err as { response?: Response; message?: string };
+		const error = err as { response?: Response; classified?: { category: string }; message?: string };
+
 		if (error.response) {
-			return error.response;
+			// Non-retryable error — check if auth (failover-eligible)
+			if (error.classified?.category === "auth") {
+				router.recordFailure(providerName);
+				return { response: error.response, failover: true };
+			}
+			return { response: error.response, failover: false };
 		}
-		logger.error("All retries exhausted", { reqId, error: error.message });
-		return jsonError(502, "api_error", error.message ?? "Upstream request failed", reqId);
+
+		// Retries exhausted — trigger failover
+		logger.error("All retries exhausted", { reqId, error: error.message, provider: providerName });
+		router.recordFailure(providerName);
+		return {
+			response: jsonError(502, "api_error", error.message ?? "Upstream request failed", reqId),
+			failover: true,
+		};
 	}
+}
+
+function getProviderConfig(config: Config, name: string): ProviderConfig | undefined {
+	const providers = config.providers as Record<string, ProviderConfig | undefined>;
+	return providers[name];
 }
 
 function jsonError(
