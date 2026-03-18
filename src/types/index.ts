@@ -73,6 +73,14 @@ export interface ProviderAdapter {
 	translate(
 		req: ProxyRequest,
 		config: ProviderConfig,
+		clientHeaders?: Record<string, string>,
 	): { url: string; headers: Record<string, string>; body: string };
 	classifyError(status: number, body?: string): ClassifiedError;
+	/** Transform a non-streaming response body (e.g. OpenAI → Anthropic format). Identity when absent. */
+	translateResponse?(responseBody: string, requestModel: string): string;
+	/** Transform a streaming response body (e.g. OpenAI SSE → Anthropic SSE). Identity when absent. */
+	translateStream?(
+		upstreamBody: ReadableStream<Uint8Array>,
+		requestModel: string,
+	): ReadableStream<Uint8Array>;
 }

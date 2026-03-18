@@ -11,15 +11,18 @@ const API_VERSION = "2023-06-01";
 export const anthropicAdapter: ProviderAdapter = {
 	name: "anthropic",
 
-	translate(req: ProxyRequest, config: ProviderConfig) {
+	translate(req: ProxyRequest, config: ProviderConfig, clientHeaders: Record<string, string> = {}) {
 		const baseUrl = config.baseUrl ?? DEFAULT_BASE_URL;
 		const url = `${baseUrl}/v1/messages`;
 
 		const headers: Record<string, string> = {
 			"content-type": "application/json",
 			"x-api-key": config.apiKey ?? "",
-			"anthropic-version": API_VERSION,
+			"anthropic-version": clientHeaders["anthropic-version"] ?? API_VERSION,
 		};
+		if (clientHeaders["anthropic-beta"]) {
+			headers["anthropic-beta"] = clientHeaders["anthropic-beta"];
+		}
 
 		// Pass the request body through as-is — it already matches the Anthropic API shape
 		const body = JSON.stringify(req);

@@ -28,11 +28,81 @@ export function createProxyHandler(config: Config, router: Router) {
 		const proxyReq: ProxyRequest = parsed.data as ProxyRequest;
 		const isStream = proxyReq.stream === true;
 
+		// Forward Anthropic-specific client headers to upstream providers
+		const clientHeaders: Record<string, string> = {};
+		for (const key of ["anthropic-version", "anthropic-beta"]) {
+			const val = req.headers.get(key);
+			if (val) clientHeaders[key] = val;
+		}
+
+		// Check for explicit provider override via query parameter
+		const url = new URL(req.url);
+		const providerOverride = url.searchParams.get("provider");
+
 		logger.info("Proxy request", {
 			...logCtx,
 			model: proxyReq.model,
 			stream: isStream,
+			...(providerOverride && { providerOverride }),
 		});
+
+		if (providerOverride) {
+			// Explicit provider — skip routing, no failover
+			const explicit = router.getAdapter(providerOverride);
+			if (!explicit) {
+				const registered = router.getRegisteredNames();
+				return jsonError(
+					400,
+					"invalid_request_error",
+					`Unknown provider "${providerOverride}". Available: ${registered.join(", ")}`,
+					reqId,
+				);
+			}
+
+			const providerConfig = getProviderConfig(config, explicit.name);
+			if (!providerConfig) {
+				return jsonError(
+					400,
+					"invalid_request_error",
+					`Provider "${providerOverride}" is not configured`,
+					reqId,
+				);
+			}
+
+			const { url: upstreamUrl, headers: upstreamHeaders, body: upstreamBody } = explicit.adapter.translate(
+				proxyReq,
+				providerConfig,
+				clientHeaders,
+			);
+
+			logger.info("Forwarding to explicit provider", { reqId, provider: explicit.name });
+
+			const result = isStream
+				? await executeStreamingRequest(
+						upstreamUrl,
+						upstreamHeaders,
+						upstreamBody,
+						reqId,
+						config,
+						explicit.adapter,
+						explicit.name,
+						router,
+						proxyReq.model,
+					)
+				: await executeWithRetry(
+						upstreamUrl,
+						upstreamHeaders,
+						upstreamBody,
+						reqId,
+						config,
+						explicit.adapter,
+						explicit.name,
+						router,
+						proxyReq.model,
+					);
+
+			return result.response;
+		}
 
 		// Select provider via router
 		const selected = router.select();
@@ -56,6 +126,7 @@ export function createProxyHandler(config: Config, router: Router) {
 			const { url, headers, body: upstreamBody } = currentProvider.adapter.translate(
 				proxyReq,
 				providerConfig,
+				clientHeaders,
 			);
 
 			logger.info("Forwarding to provider", {
@@ -73,6 +144,7 @@ export function createProxyHandler(config: Config, router: Router) {
 						currentProvider.adapter,
 						currentProvider.name,
 						router,
+						proxyReq.model,
 					)
 				: await executeWithRetry(
 						url,
@@ -83,6 +155,7 @@ export function createProxyHandler(config: Config, router: Router) {
 						currentProvider.adapter,
 						currentProvider.name,
 						router,
+						proxyReq.model,
 					);
 
 			if (result.failover) {
@@ -122,6 +195,7 @@ async function executeStreamingRequest(
 	adapter: ProviderAdapter,
 	providerName: string,
 	router: Router,
+	requestModel: string,
 ): Promise<ExecuteResult> {
 	for (let attempt = 0; attempt <= config.retry.maxRetries; attempt++) {
 		if (attempt > 0) {
@@ -157,8 +231,12 @@ async function executeStreamingRequest(
 			// Record success for the initial connection, but monitor for mid-stream failures
 			router.recordSuccess(providerName);
 
+			const translatedBody = adapter.translateStream
+				? adapter.translateStream(upstream.body, requestModel)
+				: upstream.body;
+
 			const monitoredBody = createMonitoredStream(
-				upstream.body,
+				translatedBody,
 				reqId,
 				providerName,
 				router,
@@ -236,6 +314,7 @@ async function executeWithRetry(
 	adapter: ProviderAdapter,
 	providerName: string,
 	router: Router,
+	requestModel: string,
 ): Promise<ExecuteResult> {
 	try {
 		const result = await retry(
@@ -249,8 +328,11 @@ async function executeWithRetry(
 
 				if (upstream.ok) {
 					const responseBody = await upstream.text();
+					const translatedBody = adapter.translateResponse
+						? adapter.translateResponse(responseBody, requestModel)
+						: responseBody;
 					router.recordSuccess(providerName);
-					return new Response(responseBody, {
+					return new Response(translatedBody, {
 						status: upstream.status,
 						headers: {
 							"content-type": "application/json",

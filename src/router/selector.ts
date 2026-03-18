@@ -78,6 +78,21 @@ export class Router {
 		return null;
 	}
 
+	/**
+	 * Get a specific adapter by name, regardless of health status.
+	 * Used when the caller explicitly requests a provider via `?provider=`.
+	 */
+	getAdapter(name: string): SelectedProvider | null {
+		const adapter = this.adapters.get(name);
+		if (!adapter) return null;
+		return { name, adapter };
+	}
+
+	/** Returns the list of registered adapter names. */
+	getRegisteredNames(): string[] {
+		return [...this.adapters.keys()];
+	}
+
 	recordSuccess(provider: string): void {
 		this.healthTracker.recordSuccess(provider);
 	}

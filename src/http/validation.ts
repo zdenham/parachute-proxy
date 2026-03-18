@@ -34,4 +34,4 @@ export const proxyRequestSchema = z.object({
 			z.object({ type: z.literal("tool"), name: z.string() }),
 		])
 		.optional(),
-});
+}).passthrough();

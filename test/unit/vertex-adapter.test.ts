@@ -25,7 +25,7 @@ describe("vertexAdapter", () => {
 		test("builds correct rawPredict URL for non-streaming", () => {
 			const { url } = vertexAdapter.translate(baseReq, baseConfig);
 			expect(url).toBe(
-				"https://us-east5-aiplatform.googleapis.com/v1/projects/my-project/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-20250514:rawPredict",
+				"https://us-east5-aiplatform.googleapis.com/v1/projects/my-project/locations/us-east5/publishers/anthropic/models/claude-sonnet-4@20250514:rawPredict",
 			);
 		});
 

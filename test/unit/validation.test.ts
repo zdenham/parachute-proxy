@@ -82,4 +82,43 @@ describe("proxyRequestSchema", () => {
 		});
 		expect(result.success).toBe(false);
 	});
+
+	test("passes through unknown top-level fields", () => {
+		const result = proxyRequestSchema.safeParse({
+			model: "claude-sonnet-4-20250514",
+			messages: [{ role: "user", content: "Hello" }],
+			max_tokens: 1024,
+			thinking: { type: "enabled", budget_tokens: 5000 },
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect((result.data as Record<string, unknown>).thinking).toEqual({
+				type: "enabled",
+				budget_tokens: 5000,
+			});
+		}
+	});
+
+	test("passes through system blocks with cache_control", () => {
+		const result = proxyRequestSchema.safeParse({
+			model: "claude-sonnet-4-20250514",
+			messages: [{ role: "user", content: "Hello" }],
+			max_tokens: 1024,
+			system: [
+				{
+					type: "text",
+					text: "You are helpful",
+					cache_control: { type: "ephemeral", scope: "turn" },
+				},
+			],
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			const system = result.data.system as Record<string, unknown>[];
+			expect(system[0].cache_control).toEqual({
+				type: "ephemeral",
+				scope: "turn",
+			});
+		}
+	});
 });

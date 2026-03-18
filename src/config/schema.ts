@@ -9,18 +9,20 @@ export const providerConfigSchema = z.object({
 	projectId: z.string().optional(),
 	/** AWS profile name for Bedrock credential loading from ~/.aws/credentials */
 	profile: z.string().optional(),
+	/** Model name mapping for providers that use different model identifiers (e.g. OpenAI) */
+	modelMap: z.record(z.string(), z.string()).optional(),
 });
 
 const serverDefaults = { host: "127.0.0.1", port: 3080 };
-const retryDefaults = { maxRetries: 2, minTimeoutMs: 500, maxTimeoutMs: 5000, requestTimeoutMs: 120_000 };
+const retryDefaults = { maxRetries: 1, minTimeoutMs: 500, maxTimeoutMs: 5000, requestTimeoutMs: 120_000 };
 const providerDefaults = { enabled: true };
 const circuitBreakerDefaults = {
 	failureThreshold: 5,
-	failureWindowMs: 60_000,
-	cooldownMs: 30_000,
+	failureWindowMs: 300_000,
+	cooldownMs: 600_000,
 };
 const routingDefaults = {
-	providerOrder: ["anthropic"] as string[],
+	providerOrder: ["anthropic", "vertex", "bedrock"] as string[],
 };
 
 export const configSchema = z.object({
@@ -35,11 +37,13 @@ export const configSchema = z.object({
 			anthropic: providerConfigSchema.default(providerDefaults),
 			vertex: providerConfigSchema.default({ enabled: false }),
 			bedrock: providerConfigSchema.default({ enabled: false }),
+			openai: providerConfigSchema.default({ enabled: false }),
 		})
 		.default({
 			anthropic: providerDefaults,
 			vertex: { enabled: false },
 			bedrock: { enabled: false },
+			openai: { enabled: false },
 		}),
 	routing: z
 		.object({

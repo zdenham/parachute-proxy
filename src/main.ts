@@ -6,6 +6,7 @@ import { Router } from "./router/selector.ts";
 import { anthropicAdapter } from "./providers/anthropic/adapter.ts";
 import { vertexAdapter } from "./providers/vertex/adapter.ts";
 import { bedrockAdapter } from "./providers/bedrock/adapter.ts";
+import { openaiAdapter } from "./providers/openai/adapter.ts";
 
 const config = loadConfig();
 
@@ -17,6 +18,7 @@ const router = new Router({
 router.registerAdapter(anthropicAdapter);
 router.registerAdapter(vertexAdapter);
 router.registerAdapter(bedrockAdapter);
+router.registerAdapter(openaiAdapter);
 
 const proxyHandler = createProxyHandler(config, router);
 const healthHandler = createHealthHandler(router);

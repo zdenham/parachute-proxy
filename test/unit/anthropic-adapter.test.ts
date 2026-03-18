@@ -34,6 +34,25 @@ describe("anthropicAdapter.translate", () => {
 		expect(headers["content-type"]).toBe("application/json");
 	});
 
+	test("prefers client anthropic-version header over default", () => {
+		const { headers } = anthropicAdapter.translate(minimalRequest, testConfig, {
+			"anthropic-version": "2025-01-01",
+		});
+		expect(headers["anthropic-version"]).toBe("2025-01-01");
+	});
+
+	test("forwards client anthropic-beta header", () => {
+		const { headers } = anthropicAdapter.translate(minimalRequest, testConfig, {
+			"anthropic-beta": "prompt-caching-2024-07-31",
+		});
+		expect(headers["anthropic-beta"]).toBe("prompt-caching-2024-07-31");
+	});
+
+	test("omits anthropic-beta when client does not send it", () => {
+		const { headers } = anthropicAdapter.translate(minimalRequest, testConfig, {});
+		expect(headers["anthropic-beta"]).toBeUndefined();
+	});
+
 	test("body is valid JSON of request", () => {
 		const { body } = anthropicAdapter.translate(minimalRequest, testConfig);
 		const parsed = JSON.parse(body);

@@ -36,6 +36,41 @@ export function loadConfig(): Config {
 		};
 	}
 
+	// Vertex env var overrides
+	const vertexProjectId = process.env.VERTEX_PROJECT_ID;
+	if (vertexProjectId) {
+		raw.providers = {
+			...(raw.providers as Record<string, unknown> | undefined),
+			vertex: {
+				...((raw.providers as Record<string, Record<string, unknown>> | undefined)?.vertex),
+				projectId: vertexProjectId,
+				enabled: true,
+			},
+		};
+	}
+
+	// OpenAI env var override
+	const openaiKey = process.env.OPENAI_API_KEY;
+	if (openaiKey) {
+		raw.providers = {
+			...(raw.providers as Record<string, unknown> | undefined),
+			openai: {
+				...((raw.providers as Record<string, Record<string, unknown>> | undefined)?.openai),
+				apiKey: openaiKey,
+				enabled: true,
+			},
+		};
+	}
+
+	// Provider order override (comma-separated)
+	const providerOrderOverride = process.env.PROVIDER_ORDER;
+	if (providerOrderOverride) {
+		raw.routing = {
+			...(raw.routing as Record<string, unknown> | undefined),
+			providerOrder: providerOrderOverride.split(",").map((s) => s.trim()),
+		};
+	}
+
 	const portOverride = process.env.PROXY_PORT;
 	if (portOverride) {
 		raw.server = {

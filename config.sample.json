@@ -18,18 +18,27 @@
       "enabled": false,
       "region": "us-east-1",
       "profile": "default"
+    },
+    "openai": {
+      "enabled": false,
+      "apiKey": "sk-YOUR-OPENAI-KEY-HERE",
+      "modelMap": {
+        "claude-opus-4-6": "gpt-5.4",
+        "claude-sonnet-4-20250514": "gpt-4.1",
+        "claude-haiku-4-5-20251001": "gpt-4.1-mini"
+      }
     }
   },
   "routing": {
-    "providerOrder": ["anthropic"]
+    "providerOrder": ["anthropic", "vertex", "bedrock"]
   },
   "circuitBreaker": {
     "failureThreshold": 5,
-    "failureWindowMs": 60000,
-    "cooldownMs": 30000
+    "failureWindowMs": 300000,
+    "cooldownMs": 600000
   },
   "retry": {
-    "maxRetries": 2,
+    "maxRetries": 1,
     "minTimeoutMs": 500,
     "maxTimeoutMs": 5000,
     "requestTimeoutMs": 120000

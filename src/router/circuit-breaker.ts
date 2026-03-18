@@ -13,8 +13,8 @@ export interface CircuitBreakerConfig {
 
 const DEFAULT_CONFIG: CircuitBreakerConfig = {
 	failureThreshold: 5,
-	failureWindowMs: 60_000,
-	cooldownMs: 30_000,
+	failureWindowMs: 300_000,
+	cooldownMs: 600_000,
 };
 
 export class CircuitBreaker {

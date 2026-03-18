@@ -21,7 +21,7 @@ const ANTHROPIC_VERSION = "bedrock-2023-05-31";
 export const bedrockAdapter: ProviderAdapter = {
 	name: "bedrock",
 
-	translate(req: ProxyRequest, config: ProviderConfig) {
+	translate(req: ProxyRequest, config: ProviderConfig, _clientHeaders: Record<string, string> = {}) {
 		const region = config.region ?? "us-east-1";
 		const isStream = req.stream === true;
 		const action = isStream ? "invoke-with-response-stream" : "invoke";

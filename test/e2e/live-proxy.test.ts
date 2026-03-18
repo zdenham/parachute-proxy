@@ -13,6 +13,8 @@ describe.if(LIVE)("live e2e proxy", () => {
 			env: {
 				...process.env,
 				PROXY_PORT: String(PORT),
+				PROVIDER_ORDER: "anthropic,vertex",
+				VERTEX_PROJECT_ID: process.env.VERTEX_PROJECT_ID ?? "shortcut-465217",
 			},
 			stdout: "pipe",
 			stderr: "pipe",
@@ -87,6 +89,67 @@ describe.if(LIVE)("live e2e proxy", () => {
 		expect(body.content.length).toBeGreaterThan(0);
 		expect(body.usage).toBeDefined();
 	}, 30_000);
+
+	test("POST /proxy?provider=vertex streaming returns SSE events", async () => {
+		const res = await fetch(`http://127.0.0.1:${PORT}/proxy?provider=vertex`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-sonnet-4-20250514",
+				messages: [{ role: "user", content: "Say exactly: hello world" }],
+				max_tokens: 64,
+				stream: true,
+			}),
+		});
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toBe("text/event-stream");
+
+		const text = await res.text();
+		expect(text).toContain("event: message_start");
+		expect(text).toContain("event: content_block_start");
+		expect(text).toContain("event: content_block_delta");
+		expect(text).toContain("event: message_stop");
+	}, 30_000);
+
+	test("POST /proxy?provider=vertex non-streaming returns JSON", async () => {
+		const res = await fetch(`http://127.0.0.1:${PORT}/proxy?provider=vertex`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-sonnet-4-20250514",
+				messages: [{ role: "user", content: "Say exactly: hello world" }],
+				max_tokens: 64,
+				stream: false,
+			}),
+		});
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toBe("application/json");
+
+		const body = await res.json();
+		expect(body.type).toBe("message");
+		expect(body.role).toBe("assistant");
+		expect(body.content).toBeArray();
+		expect(body.content.length).toBeGreaterThan(0);
+		expect(body.usage).toBeDefined();
+	}, 30_000);
+
+	test("POST /proxy?provider=unknown returns 400", async () => {
+		const res = await fetch(`http://127.0.0.1:${PORT}/proxy?provider=unknown`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-sonnet-4-20250514",
+				messages: [{ role: "user", content: "test" }],
+				max_tokens: 10,
+			}),
+		});
+
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.message).toContain("Unknown provider");
+	});
 
 	test("POST /proxy with invalid body returns 400", async () => {
 		const res = await fetch(`http://127.0.0.1:${PORT}/proxy`, {

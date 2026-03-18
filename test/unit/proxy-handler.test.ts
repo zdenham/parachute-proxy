@@ -112,6 +112,97 @@ describe("proxy handler unit tests", () => {
 		expect(res.status).toBe(503);
 	});
 
+	test("?provider= selects explicit provider, skipping router", async () => {
+		const config = testConfig({
+			routing: { providerOrder: ["anthropic", "vertex"] },
+			providers: {
+				anthropic: { enabled: true, apiKey: "anthropic-key" },
+				vertex: { enabled: true, apiKey: "vertex-key" },
+				bedrock: { enabled: false },
+			},
+		});
+		const router = new Router({ providerOrder: ["anthropic", "vertex"], circuitBreaker: config.circuitBreaker });
+		const vertexStub = stubAdapter("vertex");
+		router.registerAdapter(stubAdapter("anthropic"));
+		router.registerAdapter(vertexStub);
+		const handler = createProxyHandler(config, router);
+
+		// Mock fetch to return a successful response
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async () =>
+			new Response(JSON.stringify({ type: "message", role: "assistant", content: [] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+
+		try {
+			const req = new Request("http://localhost/proxy?provider=vertex", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "claude-sonnet-4-20250514",
+					messages: [{ role: "user", content: "test" }],
+					max_tokens: 10,
+				}),
+			});
+			const res = await handler(req);
+			expect(res.status).toBe(200);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("?provider=unknown returns 400", async () => {
+		const config = testConfig();
+		const router = new Router({ providerOrder: ["anthropic"], circuitBreaker: config.circuitBreaker });
+		router.registerAdapter(stubAdapter("anthropic"));
+		const handler = createProxyHandler(config, router);
+
+		const req = new Request("http://localhost/proxy?provider=unknown", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-sonnet-4-20250514",
+				messages: [{ role: "user", content: "test" }],
+				max_tokens: 10,
+			}),
+		});
+		const res = await handler(req);
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.message).toContain("Unknown provider");
+		expect(body.error.message).toContain("unknown");
+	});
+
+	test("?provider= for adapter with no provider config returns 400", async () => {
+		// Register an adapter in the router but don't add it to config.providers
+		const config = testConfig({
+			providers: {
+				anthropic: { enabled: true, apiKey: "test-key" },
+				vertex: { enabled: false },
+				bedrock: { enabled: false },
+			},
+		});
+		const router = new Router({ providerOrder: ["anthropic"], circuitBreaker: config.circuitBreaker });
+		router.registerAdapter(stubAdapter("anthropic"));
+		router.registerAdapter(stubAdapter("custom"));
+		const handler = createProxyHandler(config, router);
+
+		const req = new Request("http://localhost/proxy?provider=custom", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-sonnet-4-20250514",
+				messages: [{ role: "user", content: "test" }],
+				max_tokens: 10,
+			}),
+		});
+		const res = await handler(req);
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.message).toContain("not configured");
+	});
+
 	test("includes x-request-id in error responses", async () => {
 		const config = testConfig();
 		const router = new Router({ providerOrder: ["anthropic"], circuitBreaker: config.circuitBreaker });

@@ -28,7 +28,7 @@ const TOKEN_TTL_MS = 50 * 60 * 1000; // refresh 10min before 60min expiry
 export const vertexAdapter: ProviderAdapter = {
 	name: "vertex",
 
-	translate(req: ProxyRequest, config: ProviderConfig) {
+	translate(req: ProxyRequest, config: ProviderConfig, _clientHeaders: Record<string, string> = {}) {
 		const region = config.region ?? "us-east5";
 		const projectId = config.projectId ?? "";
 		const isStream = req.stream === true;
@@ -38,7 +38,10 @@ export const vertexAdapter: ProviderAdapter = {
 			config.baseUrl ??
 			`https://${region}-aiplatform.googleapis.com`;
 
-		const url = `${baseUrl}/v1/projects/${projectId}/locations/${region}/publishers/anthropic/models/${req.model}:${method}`;
+		// Vertex uses @ instead of - before the date version (e.g. claude-sonnet-4@20250514)
+		const vertexModel = toVertexModelId(req.model);
+
+		const url = `${baseUrl}/v1/projects/${projectId}/locations/${region}/publishers/anthropic/models/${vertexModel}:${method}`;
 
 		// Resolve auth: explicit apiKey, service account JWT, or gcloud ADC
 		const token = config.apiKey || resolveAccessToken();
@@ -118,8 +121,11 @@ function resolveServiceAccountToken(): string | null {
 		};
 		if (!cred.client_email || !cred.private_key) return null;
 
+		// .env files often store PEM keys with literal \n instead of newlines
+		const privateKey = cred.private_key.replace(/\\n/g, "\n");
+
 		const now = Math.floor(Date.now() / 1000);
-		const assertion = createJwtAssertion(cred.client_email, cred.private_key, now);
+		const assertion = createJwtAssertion(cred.client_email, privateKey, now);
 
 		// Synchronous token exchange via curl (translate() is sync)
 		const body = `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${encodeURIComponent(assertion)}`;
@@ -203,4 +209,13 @@ function resolveGcloudToken(): string | null {
 /** Reset the cached token (for testing). */
 export function resetTokenCache(): void {
 	cachedToken = null;
+}
+
+/**
+ * Convert Anthropic model ID to Vertex format.
+ * Anthropic: claude-sonnet-4-20250514 → Vertex: claude-sonnet-4@20250514
+ */
+export function toVertexModelId(model: string): string {
+	// Match a trailing date-like segment: -YYYYMMDD
+	return model.replace(/-(\d{8})$/, "@$1");
 }
