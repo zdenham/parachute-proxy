@@ -8,7 +8,8 @@ describe.if(LIVE)("live e2e proxy", () => {
 	let proc: Subprocess;
 
 	beforeAll(async () => {
-		proc = Bun.spawn(["bun", "run", "src/main.ts"], {
+		const bunPath = Bun.which("bun") ?? process.execPath;
+		proc = Bun.spawn([bunPath, "run", "src/main.ts"], {
 			env: {
 				...process.env,
 				PROXY_PORT: String(PORT),

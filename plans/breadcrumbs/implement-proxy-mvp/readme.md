@@ -39,10 +39,13 @@ The full plan is at `plans/claude-code-proxy-plan.md`.
 ## Phases
 
 - [x] Phase 1: Discovery — document compatibility spec
+
 - [x] Phase 2: Foundation — project skeleton, config, server, logging
+
 - [x] Phase 3: Anthropic backend — provider adapter, streaming, retries
+
 - [x] Live verification — e2e tests pass against real Anthropic
 
-<!-- IMPORTANT: Mark phases complete with [x] as you finish them. Update this file immediately after completing each phase - do not batch updates. -->
+&lt;!-- IMPORTANT: Mark phases complete with \[x\] as you finish them. Update this file immediately after completing each phase - do not batch updates. --&gt;
 
 ---

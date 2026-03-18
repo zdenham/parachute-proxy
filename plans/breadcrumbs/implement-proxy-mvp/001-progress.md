@@ -1,6 +1,7 @@
 # Progress 001
 
 ## Done
+
 - Phase 1: Compatibility spec written at `plans/compatibility-spec.md`
 - Phase 2: Bun + TS project initialized (biome, zod, async-retry)
 - Phase 2: Config loading from `~/.config/parachute-proxy/config.json` with zod validation and env var overrides
@@ -15,9 +16,11 @@
 - All acceptance criteria met
 
 ## Remaining
+
 - Nothing — all 4 phases complete and verified
 
 ## Context
+
 - Zod v4 (`zod/v4` import) nested `.default({})` provides literal empty object, not parsed defaults. Fixed by passing full default objects.
 - The `.env` file has `ANTHROPIC_API_KEY` which the config loader picks up via env var override.
 - E2e tests use `LIVE_TEST=1` env var and spawn the server on port 13080 to avoid conflicts.
