@@ -29,6 +29,7 @@
   "retry": {
     "maxRetries": 2,
     "minTimeoutMs": 500,
-    "maxTimeoutMs": 5000
+    "maxTimeoutMs": 5000,
+    "requestTimeoutMs": 120000
   }
 }

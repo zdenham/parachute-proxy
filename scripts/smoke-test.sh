@@ -75,5 +75,18 @@ else
   exit 1
 fi
 
+# Test 4: POST /v1/messages also routes to proxy handler
+echo "==> Test 4: POST /v1/messages with invalid body returns 400"
+STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+  -X POST "http://127.0.0.1:$PORT/v1/messages" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"test"}' || true)
+if [ "$STATUS" = "400" ]; then
+  echo "   PASS"
+else
+  echo "   FAIL: got $STATUS"
+  exit 1
+fi
+
 echo ""
 echo "==> All smoke tests passed!"
