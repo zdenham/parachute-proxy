@@ -417,6 +417,9 @@ function createMonitoredStream(
 	router: Router,
 ): ReadableStream<Uint8Array> {
 	const reader = upstream.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+	let sawErrorEvent = false;
 
 	return new ReadableStream({
 		async pull(controller) {
@@ -427,6 +430,30 @@ function createMonitoredStream(
 					controller.close();
 					return;
 				}
+
+				// Scan for SSE error events
+				buffer += decoder.decode(value, { stream: true });
+				const lines = buffer.split("\n");
+				buffer = lines.pop() ?? "";
+
+				for (const line of lines) {
+					if (line.startsWith("event: error")) {
+						sawErrorEvent = true;
+					} else if (sawErrorEvent && line.startsWith("data: ")) {
+						if (classifySSEError(line.slice(6))) {
+							logger.warn("Mid-stream SSE error event detected", {
+								reqId,
+								provider: providerName,
+								data: line.slice(6),
+							});
+							router.recordFailure(providerName);
+						}
+						sawErrorEvent = false;
+					} else if (line === "") {
+						sawErrorEvent = false;
+					}
+				}
+
 				controller.enqueue(value);
 			} catch (err) {
 				logger.warn("Mid-stream failure detected", {
@@ -434,7 +461,6 @@ function createMonitoredStream(
 					provider: providerName,
 					error: String(err),
 				});
-				// Record failure so circuit breaker tracks mid-stream disconnects
 				router.recordFailure(providerName);
 				controller.error(err);
 			}
@@ -443,6 +469,20 @@ function createMonitoredStream(
 			reader.cancel();
 		},
 	});
+}
+
+/**
+ * Returns true if this SSE error data indicates a provider health issue
+ * (and should count toward the circuit breaker), false if it's a client error.
+ */
+function classifySSEError(data: string): boolean {
+	try {
+		const parsed = JSON.parse(data);
+		const errorType = parsed?.error?.type;
+		return errorType !== "invalid_request_error";
+	} catch {
+		return true;
+	}
 }
 
 function jsonError(

@@ -72,6 +72,20 @@ function sseResponse(text: string): Response {
 	});
 }
 
+function sseErrorResponse(text: string, errorType = "overloaded_error"): Response {
+	const body = [
+		`event: message_start\ndata: {"type":"message_start","message":{"id":"msg_test","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-20250514","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}\n\n`,
+		`event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n`,
+		`event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"${text}"}}\n\n`,
+		`event: error\ndata: {"type":"error","error":{"type":"${errorType}","message":"Overloaded"}}\n\n`,
+	].join("");
+
+	return new Response(body, {
+		status: 200,
+		headers: { "content-type": "text/event-stream" },
+	});
+}
+
 function jsonMessageResponse(text: string): Response {
 	return new Response(
 		JSON.stringify({
@@ -427,6 +441,53 @@ describe("failover integration tests", () => {
 			// Normal completion should have recorded success, not failure
 			const health = router.getHealthTracker().getHealth("primary");
 			expect(health.successCount).toBe(1);
+			expect(health.failureCount).toBe(0);
+		});
+
+		test("SSE error event records failure in circuit breaker", async () => {
+			primary.reset(() => sseErrorResponse("partial response", "overloaded_error"));
+
+			const config = makeConfig({
+				providerOrder: ["primary"],
+				providers: {
+					primary: { apiKey: "k1", baseUrl: primary.url },
+				},
+				maxRetries: 0,
+			});
+			const router = new Router({ providerOrder: config.routing.providerOrder, circuitBreaker: config.circuitBreaker });
+			router.registerAdapter(createMockAdapter("primary", primary.url));
+
+			const handler = createProxyHandler(config, router);
+			const res = await handler(makeRequest(true));
+
+			expect(res.status).toBe(200);
+			// Consume the stream so the monitor processes all chunks
+			await res.text();
+
+			const health = router.getHealthTracker().getHealth("primary");
+			expect(health.failureCount).toBe(1);
+		});
+
+		test("SSE client error does not record failure", async () => {
+			primary.reset(() => sseErrorResponse("partial response", "invalid_request_error"));
+
+			const config = makeConfig({
+				providerOrder: ["primary"],
+				providers: {
+					primary: { apiKey: "k1", baseUrl: primary.url },
+				},
+				maxRetries: 0,
+			});
+			const router = new Router({ providerOrder: config.routing.providerOrder, circuitBreaker: config.circuitBreaker });
+			router.registerAdapter(createMockAdapter("primary", primary.url));
+
+			const handler = createProxyHandler(config, router);
+			const res = await handler(makeRequest(true));
+
+			expect(res.status).toBe(200);
+			await res.text();
+
+			const health = router.getHealthTracker().getHealth("primary");
 			expect(health.failureCount).toBe(0);
 		});
 	});
