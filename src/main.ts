@@ -4,6 +4,8 @@ import { healthHandler } from "./api/health-handler.ts";
 import { logger } from "./telemetry/logger.ts";
 import { Router } from "./router/selector.ts";
 import { anthropicAdapter } from "./providers/anthropic/adapter.ts";
+import { vertexAdapter } from "./providers/vertex/adapter.ts";
+import { bedrockAdapter } from "./providers/bedrock/adapter.ts";
 
 const config = loadConfig();
 
@@ -13,6 +15,8 @@ const router = new Router({
 	circuitBreaker: config.circuitBreaker,
 });
 router.registerAdapter(anthropicAdapter);
+router.registerAdapter(vertexAdapter);
+router.registerAdapter(bedrockAdapter);
 
 const proxyHandler = createProxyHandler(config, router);
 
