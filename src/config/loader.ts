@@ -5,19 +5,19 @@ import { configSchema } from "./schema.ts";
 import { logger } from "../telemetry/logger.ts";
 import type { Config } from "../types/index.ts";
 
-const CONFIG_DIR = join(homedir(), ".config", "parachute-proxy");
-const CONFIG_PATH = join(CONFIG_DIR, "config.json");
+const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "parachute-proxy", "config.json");
 
 export function loadConfig(): Config {
+	const configPath = process.env.CONFIG_PATH ?? DEFAULT_CONFIG_PATH;
 	let raw: Record<string, unknown> = {};
 
-	if (existsSync(CONFIG_PATH)) {
-		const content = readFileSync(CONFIG_PATH, "utf-8");
+	if (existsSync(configPath)) {
+		const content = readFileSync(configPath, "utf-8");
 		raw = JSON.parse(content);
-		logger.info("Loaded config", { path: CONFIG_PATH });
+		logger.info("Loaded config", { path: configPath });
 	} else {
 		logger.warn("No config file found, using defaults", {
-			path: CONFIG_PATH,
+			path: configPath,
 		});
 	}
 
