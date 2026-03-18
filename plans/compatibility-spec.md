@@ -2,16 +2,16 @@
 
 ## Overview
 
-The proxy exposes a single `POST /proxy` endpoint that accepts the same request shape as the Anthropic Messages API (`POST /v1/messages`) and returns the same response format (streaming SSE or JSON).
+The proxy exposes `POST /proxy` and `POST /v1/messages` endpoints that accept the same request shape as the Anthropic Messages API and return the same response format (streaming SSE or JSON).
 
-Claude Code sends requests to this endpoint instead of directly to `api.anthropic.com`.
+Claude Code sets `ANTHROPIC_BASE_URL` to the proxy and sends requests to `/v1/messages`. Direct integrations can use `/proxy`.
 
 ## Request Shape
 
 ### Headers
 
 | Header | Required | Description |
-|--------|----------|-------------|
+| --- | --- | --- |
 | `Content-Type` | Yes | Must be `application/json` |
 | `anthropic-version` | No | Forwarded to upstream if present (e.g., `2023-06-01`) |
 | `x-request-id` | No | If provided, used as the request ID; otherwise generated |
@@ -39,8 +39,7 @@ The request body matches the [Anthropic Messages API](https://docs.anthropic.com
 }
 ```
 
-Required fields: `model`, `messages`, `max_tokens`
-Optional fields: `stream`, `system`, `temperature`, `top_p`, `top_k`, `stop_sequences`, `metadata`, `tools`, `tool_choice`
+Required fields: `model`, `messages`, `max_tokens`Optional fields: `stream`, `system`, `temperature`, `top_p`, `top_k`, `stop_sequences`, `metadata`, `tools`, `tool_choice`
 
 The `stream` field defaults to `false` if omitted.
 
@@ -58,7 +57,7 @@ Messages use the Anthropic content block format:
 ### Headers
 
 | Header | Value |
-|--------|-------|
+| --- | --- |
 | `Content-Type` | `application/json` |
 | `x-request-id` | The request ID |
 
@@ -89,7 +88,7 @@ Standard Anthropic Messages response:
 ### Headers
 
 | Header | Value |
-|--------|-------|
+| --- | --- |
 | `Content-Type` | `text/event-stream` |
 | `Cache-Control` | `no-cache` |
 | `Connection` | `keep-alive` |
@@ -107,13 +106,13 @@ Events are forwarded verbatim from the upstream provider. The standard sequence:
 6. `message_stop` — signals end of the message
 
 Each event follows SSE format:
+
 ```
 event: message_start
 data: {"type":"message_start","message":{...}}
 
 event: content_block_delta
 data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
-
 ```
 
 ## Error Responses
@@ -131,7 +130,7 @@ Errors returned as JSON with appropriate HTTP status codes:
 ```
 
 | Status | Error Type | Description |
-|--------|-----------|-------------|
+| --- | --- | --- |
 | 400 | `invalid_request_error` | Bad request body or missing fields |
 | 401 | `authentication_error` | Missing or invalid API key in config |
 | 429 | `rate_limit_error` | Upstream rate limited |
@@ -146,3 +145,6 @@ Errors returned as JSON with appropriate HTTP status codes:
 3. **SSE pass-through**: Streaming events are piped from upstream with no transformation
 4. **Model mapping**: The `model` field is used as-is for Anthropic; other providers may remap
 5. **Retry**: Retryable errors (429, 5xx) are retried up to 2 times with exponential backoff before the response is sent to the client. Once streaming bytes are sent, no retry is attempted.
+6. **Request timeout**: Upstream requests timeout after `requestTimeoutMs` (default 120s) via `AbortSignal.timeout()`
+7. **Failover**: On retryable errors, requests fail over to the next healthy provider in the configured chain
+8. **Circuit breaker**: Providers are marked unhealthy after repeated failures (configurable threshold) and probed after a cooldown period
