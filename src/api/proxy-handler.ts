@@ -209,6 +209,7 @@ async function executeStreamingRequest(
 
 		let upstream: Response;
 		try {
+			logger.debug("Upstream request", { reqId, url, provider: providerName, body: body.slice(0, 2000) });
 			upstream = await fetch(url, {
 				method: "POST",
 				headers,
@@ -266,6 +267,7 @@ async function executeStreamingRequest(
 				status: upstream.status,
 				category: classified.category,
 				provider: providerName,
+				errorBody,
 			});
 
 			if (classified.category === "auth") {

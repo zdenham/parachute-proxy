@@ -19,7 +19,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 PORT=13083
 OPENAI_MODEL="${E2E_OPENAI_MODEL:-gpt-4o}"
-TIMEOUT_SECS=120
+TIMEOUT_SECS=90
 PROXY_PID=""
 PROXY_LOG="/tmp/parachute-e2e-proxy.log"
 CONFIG_FILE="/tmp/parachute-e2e-config.json"
@@ -35,6 +35,7 @@ cleanup() {
   rm -f "$CONFIG_FILE"
   rm -f /tmp/parachute-e2e-test.txt
   rm -f /tmp/parachute-e2e-multi.json
+  rm -f /tmp/parachute-e2e-output.*
 }
 trap cleanup EXIT
 
@@ -73,7 +74,8 @@ cat > "$CONFIG_FILE" <<EOF
       "apiKey": "$OPENAI_API_KEY",
       "modelMap": {
         "claude-sonnet-4-6": "$OPENAI_MODEL",
-        "claude-sonnet-4-20250514": "$OPENAI_MODEL"
+        "claude-sonnet-4-20250514": "$OPENAI_MODEL",
+        "claude-haiku-4-5-20251001": "gpt-4o-mini"
       }
     },
     "anthropic": { "enabled": false },
@@ -108,31 +110,35 @@ for i in $(seq 1 "$MAX_WAIT"); do
 done
 
 # --- Helper: run claude with timeout ---
+# Pipes prompt via stdin because --allowedTools is variadic and eats positional args.
 
 run_claude() {
   local prompt="$1"
+  local use_tools="${2:-true}"
   local output_file
   output_file=$(mktemp /tmp/parachute-e2e-output.XXXXXX)
 
-  # Run claude in background with a kill timer
+  local -a claude_args=(
+    -p
+    --dangerously-skip-permissions
+    --model claude-sonnet-4-6
+  )
+  if [ "$use_tools" = "true" ]; then
+    claude_args+=(--allowedTools Bash,Read,Write,Edit)
+  fi
+
+  # Pipe prompt via stdin; use a background subshell + kill for timeout
   (
+    echo "$prompt" | \
     ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" \
     ANTHROPIC_API_KEY="not-needed-but-required" \
     DISABLE_PROMPT_CACHING=1 \
-      claude -p \
-        --dangerously-skip-permissions \
-        --model claude-sonnet-4-6 \
-        --allowedTools "Bash Read Write Edit" \
-        "$prompt" \
+      claude "${claude_args[@]}" \
       > "$output_file" 2>&1
   ) &
   local claude_pid=$!
 
-  # Timer to kill if hung
-  (
-    sleep "$TIMEOUT_SECS"
-    kill "$claude_pid" 2>/dev/null || true
-  ) &
+  (sleep "$TIMEOUT_SECS" && kill "$claude_pid" 2>/dev/null) &
   local timer_pid=$!
 
   wait "$claude_pid" 2>/dev/null || true
@@ -164,7 +170,7 @@ record_result() {
 
 echo ""
 echo "==> Test 1: Basic streaming (text only)"
-OUTPUT=$(run_claude "What is 2+2? Reply with only the number.")
+OUTPUT=$(run_claude "What is 2+2? Reply with only the number." "false")
 if echo "$OUTPUT" | grep -q "4"; then
   record_result "Basic streaming" "true" "$OUTPUT"
 else

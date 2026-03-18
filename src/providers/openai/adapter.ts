@@ -12,6 +12,27 @@ import { logger } from "../../telemetry/logger.ts";
 
 const DEFAULT_BASE_URL = "https://api.openai.com";
 
+// Max completion tokens per OpenAI model family
+const MAX_COMPLETION_TOKENS: Record<string, number> = {
+	"gpt-4o": 16384,
+	"gpt-4o-mini": 16384,
+	"gpt-4-turbo": 4096,
+	"gpt-4": 8192,
+	"gpt-5.4": 128000,
+	"gpt-5.4-mini": 128000,
+	"o1": 100000,
+	"o1-mini": 65536,
+	"o1-pro": 100000,
+	"o3-mini": 100000,
+};
+
+function capMaxTokens(maxTokens: number | undefined, model: string): number | undefined {
+	if (maxTokens === undefined) return undefined;
+	const cap = MAX_COMPLETION_TOKENS[model];
+	if (cap && maxTokens > cap) return cap;
+	return maxTokens;
+}
+
 export const openaiAdapter: ProviderAdapter = {
 	name: "openai",
 
@@ -29,7 +50,7 @@ export const openaiAdapter: ProviderAdapter = {
 		const openaiBody: Record<string, unknown> = {
 			model: mappedModel,
 			messages: translateMessages(req.messages, req.system),
-			max_completion_tokens: req.max_tokens,
+			max_completion_tokens: capMaxTokens(req.max_tokens, mappedModel),
 		};
 
 		if (req.temperature !== undefined) openaiBody.temperature = req.temperature;
