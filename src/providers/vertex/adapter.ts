@@ -1,3 +1,4 @@
+import { createSign } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import type {
 	ClassifiedError,
@@ -7,10 +8,12 @@ import type {
 } from "../../types/index.ts";
 
 const ANTHROPIC_VERSION = "vertex-2023-10-16";
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 
-/** Cached ADC token with expiration (tokens last 60min, refresh at 50min) */
-let cachedAdcToken: { token: string; expiresAt: number } | null = null;
-const ADC_TOKEN_TTL_MS = 50 * 60 * 1000; // 50 minutes
+/** Cached access token with expiration */
+let cachedToken: { token: string; expiresAt: number } | null = null;
+const TOKEN_TTL_MS = 50 * 60 * 1000; // refresh 10min before 60min expiry
 
 /**
  * Vertex AI adapter for Claude models.
@@ -37,8 +40,8 @@ export const vertexAdapter: ProviderAdapter = {
 
 		const url = `${baseUrl}/v1/projects/${projectId}/locations/${region}/publishers/anthropic/models/${req.model}:${method}`;
 
-		// Resolve auth: explicit apiKey or ADC
-		const token = config.apiKey || resolveAdcToken();
+		// Resolve auth: explicit apiKey, service account JWT, or gcloud ADC
+		const token = config.apiKey || resolveAccessToken();
 
 		const headers: Record<string, string> = {
 			"content-type": "application/json",
@@ -82,35 +85,122 @@ export const vertexAdapter: ProviderAdapter = {
 };
 
 /**
- * Resolve an access token from Google Application Default Credentials.
- * Uses `gcloud auth application-default print-access-token` with caching.
- * Returns null if gcloud is not available or ADC is not configured.
+ * Resolve an access token, trying in order:
+ * 1. Cached token (if still valid)
+ * 2. Service account JWT exchange (GOOGLE_CREDENTIALS_JSON env var)
+ * 3. gcloud CLI ADC fallback
  */
-export function resolveAdcToken(): string | null {
-	// Return cached token if still valid
-	if (cachedAdcToken && Date.now() < cachedAdcToken.expiresAt) {
-		return cachedAdcToken.token;
+export function resolveAccessToken(): string | null {
+	if (cachedToken && Date.now() < cachedToken.expiresAt) {
+		return cachedToken.token;
 	}
 
+	// Try service account JWT first
+	const saToken = resolveServiceAccountToken();
+	if (saToken) return saToken;
+
+	// Fall back to gcloud CLI
+	return resolveGcloudToken();
+}
+
+/**
+ * Exchange a service account JWT assertion for an access token.
+ * Reads GOOGLE_CREDENTIALS_JSON env var containing the service account key JSON.
+ */
+function resolveServiceAccountToken(): string | null {
+	const credJson = process.env.GOOGLE_CREDENTIALS_JSON;
+	if (!credJson) return null;
+
 	try {
-		const result = spawnSync("gcloud", ["auth", "application-default", "print-access-token"], {
-			timeout: 5000,
-			env: process.env,
-		});
+		const cred = JSON.parse(credJson) as {
+			client_email?: string;
+			private_key?: string;
+		};
+		if (!cred.client_email || !cred.private_key) return null;
+
+		const now = Math.floor(Date.now() / 1000);
+		const assertion = createJwtAssertion(cred.client_email, cred.private_key, now);
+
+		// Synchronous token exchange via curl (translate() is sync)
+		const body = `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${encodeURIComponent(assertion)}`;
+		const curlResult = spawnSync(
+			"curl",
+			["-s", "-X", "POST", "-H", "Content-Type: application/x-www-form-urlencoded", "-d", body, GOOGLE_TOKEN_URL],
+			{ timeout: 10_000 },
+		);
+
+		if (curlResult.status !== 0) return null;
+
+		const resp = JSON.parse(curlResult.stdout?.toString() ?? "{}") as {
+			access_token?: string;
+			expires_in?: number;
+		};
+		if (!resp.access_token) return null;
+
+		const ttl = Math.min((resp.expires_in ?? 3600) * 1000 - 600_000, TOKEN_TTL_MS);
+		cachedToken = { token: resp.access_token, expiresAt: Date.now() + ttl };
+		return resp.access_token;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Create a signed JWT assertion for Google OAuth2 token exchange.
+ */
+export function createJwtAssertion(
+	clientEmail: string,
+	privateKey: string,
+	nowSeconds: number,
+): string {
+	const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+	const payload = base64url(
+		JSON.stringify({
+			iss: clientEmail,
+			scope: CLOUD_PLATFORM_SCOPE,
+			aud: GOOGLE_TOKEN_URL,
+			iat: nowSeconds,
+			exp: nowSeconds + 3600,
+		}),
+	);
+
+	const signingInput = `${header}.${payload}`;
+	const signer = createSign("RSA-SHA256");
+	signer.update(signingInput);
+	const signature = base64url(signer.sign(privateKey));
+
+	return `${signingInput}.${signature}`;
+}
+
+function base64url(input: string | Buffer): string {
+	const buf = typeof input === "string" ? Buffer.from(input) : input;
+	return buf.toString("base64url");
+}
+
+/**
+ * Resolve an access token from gcloud CLI ADC.
+ */
+function resolveGcloudToken(): string | null {
+	try {
+		const result = spawnSync(
+			"gcloud",
+			["auth", "application-default", "print-access-token"],
+			{ timeout: 5000, env: process.env },
+		);
 
 		if (result.status !== 0) return null;
 
 		const token = result.stdout?.toString().trim();
 		if (!token) return null;
 
-		cachedAdcToken = { token, expiresAt: Date.now() + ADC_TOKEN_TTL_MS };
+		cachedToken = { token, expiresAt: Date.now() + TOKEN_TTL_MS };
 		return token;
 	} catch {
 		return null;
 	}
 }
 
-/** Reset the cached ADC token (for testing). */
-export function resetAdcTokenCache(): void {
-	cachedAdcToken = null;
+/** Reset the cached token (for testing). */
+export function resetTokenCache(): void {
+	cachedToken = null;
 }
