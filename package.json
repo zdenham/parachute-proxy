@@ -1,0 +1,25 @@
+{
+  "name": "parachute-proxy",
+  "module": "src/main.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "dev": "bun --watch run src/main.ts",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "async-retry": "^1.3.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.7",
+    "@types/async-retry": "^1.4.9",
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
